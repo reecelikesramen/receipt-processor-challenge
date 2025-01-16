@@ -4,6 +4,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -15,27 +16,29 @@ import (
 
 const DefaultPort = "8080"
 
-type item struct {
+type Item struct {
 	ShortDescription string `json:"shortDescription"`
 	Price            string `json:"price"`
 }
 
-type receipt struct {
+type Receipt struct {
 	Retailer     string `json:"retailer"`
 	PurcahseDate string `json:"purchaseDate"`
 	PurchaseTime string `json:"purchaseTime"`
-	Items        []item `json:"items"`
+	Items        []Item `json:"items"`
 	Total        string `json:"total"`
 }
+
+var retailerRegex *regexp.Regexp
+var priceRegex *regexp.Regexp
+var itemShortDescRegex *regexp.Regexp
 
 var inMemoryStore sync.Map
 
 // TODO switch from indentedJSON to JSON after development
 
 func main() {
-	router := gin.Default()
-	router.POST("/receipts/process", processReceipt)
-	router.GET("/receipts/:id/points", getReceiptPoints)
+	router := SetupAPI()
 
 	// port from env or default
 	port := os.Getenv("PORT")
@@ -46,12 +49,31 @@ func main() {
 	router.Run(":" + port)
 }
 
+func SetupAPI() *gin.Engine {
+	// Compile RegExs once
+	retailerRegex = regexp.MustCompile(`^[\w\s\-&]+$`)
+	priceRegex = regexp.MustCompile(`^\d+\.\d{2}$`)
+	itemShortDescRegex = regexp.MustCompile(`^[\w\s\-]+$`)
+
+	router := gin.Default()
+	router.POST("/receipts/process", processReceipt)
+	router.GET("/receipts/:id/points", getReceiptPoints)
+
+	return router
+}
+
 func processReceipt(c *gin.Context) {
-	var newReceipt receipt
+	var newReceipt Receipt
 
 	// Payload should bind to receipt type, otherwise bad request with custom message
 	if err := c.ShouldBindJSON(&newReceipt); err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Doesn't bind"})
+		return
+	}
+
+	// Validate Retailer field against RegEx in schema or Bad Request
+	if !retailerRegex.MatchString(newReceipt.Retailer) {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Invalid retailer name"})
 		return
 	}
 
@@ -65,7 +87,13 @@ func processReceipt(c *gin.Context) {
 		}
 	}
 
-	// Parse receipt total or bad request
+	// Validate Total against RegEx in schema or Bad Request
+	if !priceRegex.MatchString(newReceipt.Total) {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Invalid total format"})
+		return
+	}
+
+	// Parse receipt total or Bad Request
 	receiptTotal, err := strconv.ParseFloat(newReceipt.Total, 64)
 	if err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Receipt total not a float"})
@@ -84,15 +112,28 @@ func processReceipt(c *gin.Context) {
 
 	// If the trimmed length of the item description is a multiple of 3, multiply the price by `0.2` and round up to the nearest integer. The result is the number of points earned.
 	for _, item := range newReceipt.Items {
+
+		// Validate Short Description against RegEx in schema or Bad Request
+		if !itemShortDescRegex.MatchString(item.ShortDescription) {
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Invalid short description format"})
+			return
+		}
+
+		// Validate Item Price against RegEx in schema or Bad Request
+		if !priceRegex.MatchString(item.Price) {
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Item price invalid format"})
+			return
+		}
+
 		// Reduce nesting, continue if short description is not a multiple of 3
 		if len(strings.TrimSpace(item.ShortDescription))%3 != 0 {
 			continue
 		}
 
-		// Parse item price or bad request
+		// Parse item price or Bad Request
 		itemPrice, err := strconv.ParseFloat(item.Price, 64)
 		if err != nil {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Item total not a float"})
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Item price not a float"})
 		}
 
 		// Round up item price * 0.2, add to points
@@ -122,10 +163,11 @@ func processReceipt(c *gin.Context) {
 
 	inMemoryStore.Store(receiptGuid, points)
 
-	c.IndentedJSON(http.StatusOK, gin.H{receiptGuid: points})
+	c.IndentedJSON(http.StatusOK, gin.H{"id": receiptGuid})
 }
 
 func getReceiptPoints(c *gin.Context) {
+	// don't need to check input against regex since the in memory store is populated by GUIDs and will always be valid
 	points, ok := inMemoryStore.Load(c.Param("id"))
 
 	// exit if we can't find this receipt ID
