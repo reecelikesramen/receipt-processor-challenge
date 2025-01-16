@@ -124,18 +124,45 @@ func TestPostValidReceipts(t *testing.T) {
 		// ASSERT Response code OK
 		assert.Equal(t, http.StatusOK, w.Code)
 
-		// Parse response
-		var response postResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response)
+		// Parse response1
+		var response1 postResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response1)
 
-		// No error in decoding and JSON contains proper ID key
+		// No error in decoding
 		assert.NoError(t, err)
-		assert.NotEmpty(t, response.Id)
+
+		// Reset recorder
+		w = httptest.NewRecorder()
+
+		// Get receipt points by ID
+		getReq := httptest.NewRequest("GET", "/receipts/"+response1.Id+"/points", nil)
+		router.ServeHTTP(w, getReq)
+
+		// ASSERT Response code OK
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		// Parse response2
+		var response2 getResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response2)
+
+		// No error in decoding
+		assert.NoError(t, err)
 	}
 }
 
+// Tests different cases to verify the correct number of points is generated for receipts.
+//
+// Cases:
+// - Tests from README
+// - 0.25 cent bonus
+// - Round dollar bonus
+// - 2-4pm bonus and boundary cases
+// - Odd purchase day
+// - Even purchase day (handled with 2-4pm boundary cases)
+// - Item pair bonus
 func TestCorrectReceiptPoints(t *testing.T) {
 	receiptAndCorrectPoints := []receiptPoints{
+		/* Test from README */
 		{receipt: `{
   "retailer": "Target",
   "purchaseDate": "2022-01-01",
@@ -164,6 +191,7 @@ func TestCorrectReceiptPoints(t *testing.T) {
   ],
   "total": "35.35"
 }`, points: 28},
+		/* Test from README */
 		{receipt: `{
 	"retailer": "M&M Corner Market",
 	"purchaseDate": "2022-03-20",
@@ -188,6 +216,117 @@ func TestCorrectReceiptPoints(t *testing.T) {
 	],
 	"total": "9.00"
 }`, points: 109},
+		/* Test from examples/simple-receipt.json */
+		{receipt: `{
+    "retailer": "Target",
+    "purchaseDate": "2022-01-02",
+    "purchaseTime": "13:13",
+    "total": "1.25",
+    "items": [
+        {"shortDescription": "Pepsi - 12-oz", "price": "1.25"}
+    ]
+}`, points: 31},
+		/* Test from examples/morning-receipt.json */
+		{receipt: `{
+    "retailer": "Walgreens",
+    "purchaseDate": "2022-01-02",
+    "purchaseTime": "08:13",
+    "total": "2.65",
+    "items": [
+        {"shortDescription": "Pepsi - 12-oz", "price": "1.25"},
+        {"shortDescription": "Dasani", "price": "1.40"}
+    ]
+}`, points: 15},
+		/* Test 0.25 cent bonus */
+		{receipt: `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "13:59",
+  "items": [{ "shortDescription": "B", "price": "1.25" }],
+  "total": "1.25"
+}`, points: 26},
+		/* Test round dollar bonus */
+		{receipt: `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "13:59",
+  "items": [{ "shortDescription": "B", "price": "1.00" }],
+  "total": "1.00"
+}`, points: 76},
+		/* Test between 2-4pm bonus */
+		{receipt: `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "14:01",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`, points: 11},
+		{receipt: `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "15:00",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`, points: 11},
+		{receipt: `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "15:59",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`, points: 11},
+		/* Test outside 2-4pm no bonus */
+		{receipt: `{
+	"retailer": "A",
+	"purchaseDate": "2025-01-14",
+	"purchaseTime": "13:59",
+	"items": [{ "shortDescription": "B", "price": "1.01" }],
+	"total": "1.01"
+}`, points: 1},
+		{receipt: `{
+	"retailer": "A",
+	"purchaseDate": "2025-01-14",
+	"purchaseTime": "14:00",
+	"items": [{ "shortDescription": "B", "price": "1.01" }],
+	"total": "1.01"
+}`, points: 1},
+		{receipt: `{
+	"retailer": "A",
+	"purchaseDate": "2025-01-14",
+	"purchaseTime": "16:00",
+	"items": [{ "shortDescription": "B", "price": "1.01" }],
+	"total": "1.01"
+}`, points: 1},
+		{receipt: `{
+	"retailer": "A",
+	"purchaseDate": "2025-01-14",
+	"purchaseTime": "16:01",
+	"items": [{ "shortDescription": "B", "price": "1.01" }],
+	"total": "1.01"
+}`, points: 1},
+		/* Test odd purchase day bonus */
+		{receipt: `{
+	"retailer": "A",
+	"purchaseDate": "2025-01-15",
+	"purchaseTime": "16:01",
+	"items": [{ "shortDescription": "B", "price": "1.01" }],
+	"total": "1.01"
+}`, points: 7},
+		/* Test item pair bonus */
+		{receipt: `{
+			"retailer": "A",
+			"purchaseDate": "2025-01-14",
+			"purchaseTime": "16:01",
+			"items": [{ "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }],
+			"total": "1.01"
+		}`, points: 6},
+		{receipt: `{
+			"retailer": "A",
+			"purchaseDate": "2025-01-14",
+			"purchaseTime": "16:01",
+			"items": [{ "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }, { "shortDescription": "A", "price": "1.01" }, { "shortDescription": "B", "price": "1.01" }],
+			"total": "1.01"
+		}`, points: 161},
 	}
 
 	for _, receiptAndPoints := range receiptAndCorrectPoints {
@@ -200,6 +339,9 @@ func TestCorrectReceiptPoints(t *testing.T) {
 
 		// Serve with mocked HTTP
 		router.ServeHTTP(w, postReq)
+
+		// Assert status code
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		// Parse response1
 		var response1 postResponse
@@ -215,9 +357,11 @@ func TestCorrectReceiptPoints(t *testing.T) {
 		getReq := httptest.NewRequest("GET", "/receipts/"+response1.Id+"/points", nil)
 		router.ServeHTTP(w, getReq)
 
+		// Assert status code OK
+		assert.Equal(t, http.StatusOK, w.Code)
+
 		// Parse response2
 		var response2 getResponse
-
 		err = json.Unmarshal(w.Body.Bytes(), &response2)
 
 		// No error in decoding
@@ -238,20 +382,44 @@ func TestInvalidRetailerFailure(t *testing.T) {
 }`
 
 	// Test request
-	postReq := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(invalidRetailer))
-	postReq.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(invalidRetailer))
+	req.Header.Set("Content-Type", "application/json")
 
 	// New recorder
 	w := httptest.NewRecorder()
 
 	// Serve with mocked HTTP
-	router.ServeHTTP(w, postReq)
+	router.ServeHTTP(w, req)
 
 	// Assert Bad Request
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestInvalidPriceFormat(t *testing.T) {
+func TestInvalidShortDescriptionFailure(t *testing.T) {
+	// Test request
+	req := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(`{
+  "retailer": "Retailer D",
+  "purchaseDate": "2025-01-15",
+  "purchaseTime": "15:30",
+  "items": [
+    { "shortDescription": "!ABCD_EF", "price": "10.00" },
+    { "shortDescription": "@ABCD$E", "price": "5.00" }
+  ],
+  "total": "15.00"
+}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	// New recorder
+	w := httptest.NewRecorder()
+
+	// Serve with mocked HTTP
+	router.ServeHTTP(w, req)
+
+	// Assert Bad Request
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestInvalidPriceFormatFailure(t *testing.T) {
 	invalidPriceTotal1 := `{
   "retailer": "Target",
   "purchaseDate": "2022-01-01",
@@ -306,140 +474,6 @@ func TestInvalidPriceFormat(t *testing.T) {
 	}
 }
 
-func TestOutOfBonusPointsTime(t *testing.T) {
-
-	/* Each test case is designed to have 1 point */
-	before2Pm := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "13:59",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	exactly2Pm := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "14:00",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	exactly4Pm := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "16:00",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	after4Pm := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "16:01",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	testPayloads := []string{before2Pm, exactly2Pm, exactly4Pm, after4Pm}
-
-	for _, payload := range testPayloads {
-		// Test request
-		postReq := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
-		postReq.Header.Set("Content-Type", "application/json")
-
-		// New recorder
-		w := httptest.NewRecorder()
-
-		// Serve with mocked HTTP
-		router.ServeHTTP(w, postReq)
-
-		// Parse response1
-		var response1 postResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response1)
-
-		// No error in decoding and JSON
-		assert.NoError(t, err)
-
-		// Reset recorder
-		w = httptest.NewRecorder()
-
-		// Get receipt points by ID
-		getReq := httptest.NewRequest("GET", "/receipts/"+response1.Id+"/points", nil)
-		router.ServeHTTP(w, getReq)
-
-		// Parse response2
-		var response2 getResponse
-
-		err = json.Unmarshal(w.Body.Bytes(), &response2)
-
-		// No error in decoding
-		assert.NoError(t, err)
-
-		// Points equal whats expected
-		assert.Equal(t, 1, response2.Points)
-	}
-}
-
-func TestInBonusPointsTime(t *testing.T) {
-	/* Each test case was designed to produce exactly 11 points */
-	rightAfter2Pm := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "14:01",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	between := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "15:00",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	rightBefore4Pm := `{
-  "retailer": "A",
-  "purchaseDate": "2025-01-14",
-  "purchaseTime": "15:59",
-  "items": [{ "shortDescription": "B", "price": "1.01" }],
-  "total": "1.01"
-}`
-	testPayloads := []string{rightAfter2Pm, between, rightBefore4Pm}
-
-	for _, payload := range testPayloads {
-		// Test request
-		postReq := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
-		postReq.Header.Set("Content-Type", "application/json")
-
-		// New recorder
-		w := httptest.NewRecorder()
-
-		// Serve with mocked HTTP
-		router.ServeHTTP(w, postReq)
-
-		// Parse response1
-		var response1 postResponse
-		err := json.Unmarshal(w.Body.Bytes(), &response1)
-
-		// No error in decoding and JSON
-		assert.NoError(t, err)
-
-		// Reset recorder
-		w = httptest.NewRecorder()
-
-		// Get receipt points by ID
-		getReq := httptest.NewRequest("GET", "/receipts/"+response1.Id+"/points", nil)
-		router.ServeHTTP(w, getReq)
-
-		// Parse response2
-		var response2 getResponse
-
-		err = json.Unmarshal(w.Body.Bytes(), &response2)
-
-		// No error in decoding
-		assert.NoError(t, err)
-
-		// Points equal whats expected
-		assert.Equal(t, 11, response2.Points)
-	}
-}
-
 func TestInvalidDateTimeFailure(t *testing.T) {
 	invalidDate := `{
   "retailer": "Invalid Date Format Test",
@@ -456,6 +490,102 @@ func TestInvalidDateTimeFailure(t *testing.T) {
   "total": "0.99"
 }`
 	testPayloads := []string{invalidDate, invalidTime}
+
+	for _, payload := range testPayloads {
+		// Test request
+		req := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+
+		// New recorder
+		w := httptest.NewRecorder()
+
+		// Serve with mocked HTTP
+		router.ServeHTTP(w, req)
+
+		// Assert Bad Request
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestEmptyItemsFailure(t *testing.T) {
+	// Test request
+	req := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(`{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "15:59",
+  "items": [],
+  "total": "1.01"
+}`))
+	req.Header.Set("Content-Type", "application/json")
+
+	// New recorder
+	w := httptest.NewRecorder()
+
+	// Serve with mocked HTTP
+	router.ServeHTTP(w, req)
+
+	// Assert Bad Request
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestMissingRequiredFieldsFailure(t *testing.T) {
+	missingRetailer := `{
+  "purchaseDate": "2022-03-20",
+  "purchaseTime": "14:33",
+  "items": [
+    {
+      "shortDescription": "Gatorade",
+      "price": "2.25"
+    }
+  ],
+  "total": "9.00"
+}`
+	missingPurchaseDate := `{
+	"retailer": "Target"
+  "purchaseTime": "14:33",
+  "items": [
+    {
+      "shortDescription": "Gatorade",
+      "price": "2.25"
+    }
+  ],
+  "total": "9.00"
+}`
+	missingPurchaseTime := `{
+	"retailer": "Target"
+  "purchaseDate": "2022-03-20",
+  "items": [
+    {
+      "shortDescription": "Gatorade",
+      "price": "2.25"
+    }
+  ],
+  "total": "9.00"
+}`
+	missingTotal := `{
+	"retailer": "Target"
+	"purchaseDate": "2022-03-20",
+	"purchaseTime": "14:33",
+  "items": [
+    {
+      "shortDescription": "Gatorade",
+      "price": "2.25"
+    }
+  ]
+}`
+	missingItems := `{
+	"retailer": "Target"
+	"purchaseDate": "2022-03-20",
+	"purchaseTime": "14:33",
+  "items": [
+    {
+      "shortDescription": "Gatorade",
+      "price": "2.25"
+    }
+  ]
+}`
+
+	testPayloads := []string{missingRetailer, missingPurchaseDate, missingPurchaseTime, missingItems, missingTotal}
 
 	for _, payload := range testPayloads {
 		// Test request

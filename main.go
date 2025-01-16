@@ -35,8 +35,6 @@ var itemShortDescRegex *regexp.Regexp
 
 var inMemoryStore sync.Map
 
-// TODO switch from indentedJSON to JSON after development
-
 func main() {
 	router := SetupAPI()
 
@@ -62,18 +60,20 @@ func SetupAPI() *gin.Engine {
 	return router
 }
 
+// TODO should we check if receipt line items add up to the total?
+// TODO switch from indentedJSON to JSON after development because it is more performant
 func processReceipt(c *gin.Context) {
 	var newReceipt Receipt
 
 	// Payload should bind to receipt type, otherwise bad request with custom message
 	if err := c.ShouldBindJSON(&newReceipt); err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Doesn't bind"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 		return
 	}
 
 	// Validate Retailer field against RegEx in schema or Bad Request
 	if !retailerRegex.MatchString(newReceipt.Retailer) {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Invalid retailer name"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 		return
 	}
 
@@ -89,14 +89,14 @@ func processReceipt(c *gin.Context) {
 
 	// Validate Total against RegEx in schema or Bad Request
 	if !priceRegex.MatchString(newReceipt.Total) {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Invalid total format"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 		return
 	}
 
 	// Parse receipt total or Bad Request
 	receiptTotal, err := strconv.ParseFloat(newReceipt.Total, 64)
 	if err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Receipt total not a float"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 		return
 	}
 
@@ -110,7 +110,7 @@ func processReceipt(c *gin.Context) {
 
 	// Validate Items has at least 1 or Bad Request
 	if len(newReceipt.Items) == 0 {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Need at least 1 items"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 		return
 	}
 
@@ -122,13 +122,13 @@ func processReceipt(c *gin.Context) {
 
 		// Validate Short Description against RegEx in schema or Bad Request
 		if !itemShortDescRegex.MatchString(item.ShortDescription) {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Invalid short description format"})
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 			return
 		}
 
 		// Validate Item Price against RegEx in schema or Bad Request
 		if !priceRegex.MatchString(item.Price) {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Item price invalid format"})
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 			return
 		}
 
@@ -140,7 +140,7 @@ func processReceipt(c *gin.Context) {
 		// Parse item price or Bad Request
 		itemPrice, err := strconv.ParseFloat(item.Price, 64)
 		if err != nil {
-			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Item price not a float"})
+			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 			return
 		}
 
@@ -149,10 +149,11 @@ func processReceipt(c *gin.Context) {
 		points += int(roundUp)
 	}
 
+	// Parse date and time as combined string with datetime
 	timeString := newReceipt.PurcahseDate + "T" + newReceipt.PurchaseTime
 	dateTime, err := time.Parse("2006-01-02T15:04", timeString)
 	if err != nil {
-		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Date is wrong"})
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid."})
 		return
 	}
 
