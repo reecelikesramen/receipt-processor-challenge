@@ -97,6 +97,7 @@ func processReceipt(c *gin.Context) {
 	receiptTotal, err := strconv.ParseFloat(newReceipt.Total, 64)
 	if err != nil {
 		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Receipt total not a float"})
+		return
 	}
 
 	// 50 points if total is a round dollar amount, 25 points if total is a 25 cent amount
@@ -105,6 +106,12 @@ func processReceipt(c *gin.Context) {
 		points += 75
 	} else if getChange(receiptTotal) == 25 {
 		points += 25
+	}
+
+	// Validate Items has at least 1 or Bad Request
+	if len(newReceipt.Items) == 0 {
+		c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Need at least 1 items"})
+		return
 	}
 
 	// 5 points for every two items
@@ -134,6 +141,7 @@ func processReceipt(c *gin.Context) {
 		itemPrice, err := strconv.ParseFloat(item.Price, 64)
 		if err != nil {
 			c.IndentedJSON(http.StatusBadRequest, gin.H{"description": "The receipt is invalid. Item price not a float"})
+			return
 		}
 
 		// Round up item price * 0.2, add to points

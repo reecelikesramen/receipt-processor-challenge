@@ -218,8 +218,6 @@ func TestCorrectReceiptPoints(t *testing.T) {
 		// Parse response2
 		var response2 getResponse
 
-		println(w.Body.String())
-
 		err = json.Unmarshal(w.Body.Bytes(), &response2)
 
 		// No error in decoding
@@ -228,5 +226,249 @@ func TestCorrectReceiptPoints(t *testing.T) {
 		// Points equal whats expected
 		assert.Equal(t, receiptAndPoints.points, response2.Points)
 	}
+}
 
+func TestInvalidRetailerFailure(t *testing.T) {
+	invalidRetailer := `{
+  "retailer": "!!!@@@###",
+  "purchaseDate": "2025-01-15",
+  "purchaseTime": "15:30",
+  "items": [],
+  "total": "0.00"
+}`
+
+	// Test request
+	postReq := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(invalidRetailer))
+	postReq.Header.Set("Content-Type", "application/json")
+
+	// New recorder
+	w := httptest.NewRecorder()
+
+	// Serve with mocked HTTP
+	router.ServeHTTP(w, postReq)
+
+	// Assert Bad Request
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestInvalidPriceFormat(t *testing.T) {
+	invalidPriceTotal1 := `{
+  "retailer": "Target",
+  "purchaseDate": "2022-01-01",
+  "purchaseTime": "13:01",
+  "items": [
+    {
+      "shortDescription": "Mountain Dew 12PK",
+      "price": "6.49"
+    }
+  ],
+  "total": "35"
+}`
+	invalidPriceTotal2 := `{
+  "retailer": "Target",
+  "purchaseDate": "2022-01-01",
+  "purchaseTime": "13:01",
+  "items": [
+    {
+      "shortDescription": "Mountain Dew 12PK",
+      "price": "6.49"
+    }
+  ],
+  "total": "35.349"
+}`
+	invalidItemPrice := `{
+  "retailer": "Target",
+  "purchaseDate": "2022-01-01",
+  "purchaseTime": "13:01",
+  "items": [
+    {
+      "shortDescription": "Mountain Dew 12PK",
+      "price": "6.4"
+    }
+  ],
+  "total": "35.00"
+}`
+	testPayloads := []string{invalidPriceTotal1, invalidPriceTotal2, invalidItemPrice}
+
+	for _, payload := range testPayloads {
+		// Test request
+		req := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+
+		// New recorder
+		w := httptest.NewRecorder()
+
+		// Serve with mocked HTTP
+		router.ServeHTTP(w, req)
+
+		// Assert Bad Request
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
+}
+
+func TestOutOfBonusPointsTime(t *testing.T) {
+
+	/* Each test case is designed to have 1 point */
+	before2Pm := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "13:59",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	exactly2Pm := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "14:00",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	exactly4Pm := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "16:00",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	after4Pm := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "16:01",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	testPayloads := []string{before2Pm, exactly2Pm, exactly4Pm, after4Pm}
+
+	for _, payload := range testPayloads {
+		// Test request
+		postReq := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
+		postReq.Header.Set("Content-Type", "application/json")
+
+		// New recorder
+		w := httptest.NewRecorder()
+
+		// Serve with mocked HTTP
+		router.ServeHTTP(w, postReq)
+
+		// Parse response1
+		var response1 postResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response1)
+
+		// No error in decoding and JSON
+		assert.NoError(t, err)
+
+		// Reset recorder
+		w = httptest.NewRecorder()
+
+		// Get receipt points by ID
+		getReq := httptest.NewRequest("GET", "/receipts/"+response1.Id+"/points", nil)
+		router.ServeHTTP(w, getReq)
+
+		// Parse response2
+		var response2 getResponse
+
+		err = json.Unmarshal(w.Body.Bytes(), &response2)
+
+		// No error in decoding
+		assert.NoError(t, err)
+
+		// Points equal whats expected
+		assert.Equal(t, 1, response2.Points)
+	}
+}
+
+func TestInBonusPointsTime(t *testing.T) {
+	/* Each test case was designed to produce exactly 11 points */
+	rightAfter2Pm := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "14:01",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	between := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "15:00",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	rightBefore4Pm := `{
+  "retailer": "A",
+  "purchaseDate": "2025-01-14",
+  "purchaseTime": "15:59",
+  "items": [{ "shortDescription": "B", "price": "1.01" }],
+  "total": "1.01"
+}`
+	testPayloads := []string{rightAfter2Pm, between, rightBefore4Pm}
+
+	for _, payload := range testPayloads {
+		// Test request
+		postReq := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
+		postReq.Header.Set("Content-Type", "application/json")
+
+		// New recorder
+		w := httptest.NewRecorder()
+
+		// Serve with mocked HTTP
+		router.ServeHTTP(w, postReq)
+
+		// Parse response1
+		var response1 postResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response1)
+
+		// No error in decoding and JSON
+		assert.NoError(t, err)
+
+		// Reset recorder
+		w = httptest.NewRecorder()
+
+		// Get receipt points by ID
+		getReq := httptest.NewRequest("GET", "/receipts/"+response1.Id+"/points", nil)
+		router.ServeHTTP(w, getReq)
+
+		// Parse response2
+		var response2 getResponse
+
+		err = json.Unmarshal(w.Body.Bytes(), &response2)
+
+		// No error in decoding
+		assert.NoError(t, err)
+
+		// Points equal whats expected
+		assert.Equal(t, 11, response2.Points)
+	}
+}
+
+func TestInvalidDateTimeFailure(t *testing.T) {
+	invalidDate := `{
+  "retailer": "Invalid Date Format Test",
+  "purchaseDate": "2025-1-7",
+  "purchaseTime": "15:00",
+  "items": [{ "shortDescription": "Test Item", "price": "0.99" }],
+  "total": "0.99"
+}`
+	invalidTime := `{
+  "retailer": "Invalid Time Format Test",
+  "purchaseDate": "2025-01-15",
+  "purchaseTime": "3 PM",
+  "items": [{ "shortDescription": "Test Item", "price": "0.99" }],
+  "total": "0.99"
+}`
+	testPayloads := []string{invalidDate, invalidTime}
+
+	for _, payload := range testPayloads {
+		// Test request
+		req := httptest.NewRequest("POST", "/receipts/process", bytes.NewBufferString(payload))
+		req.Header.Set("Content-Type", "application/json")
+
+		// New recorder
+		w := httptest.NewRecorder()
+
+		// Serve with mocked HTTP
+		router.ServeHTTP(w, req)
+
+		// Assert Bad Request
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	}
 }
